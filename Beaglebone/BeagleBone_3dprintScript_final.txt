@@ -1,0 +1,299 @@
+import time
+import serial
+import Adafruit_BBIO.GPIO as GPIO
+import Adafruit_BBIO.ADC as ADC
+
+GPIO.setup("P8_7", GPIO.IN)
+GPIO.setup("P8_8", GPIO.IN)
+GPIO.setup("P8_9", GPIO.IN)
+GPIO.setup("P8_10", GPIO.IN)
+GPIO.setup("P8_12", GPIO.IN)
+GPIO.setup("P8_13", GPIO.IN)
+GPIO.setup("P8_11", GPIO.OUT)
+serial_port = serial.Serial( port="/dev/ttyUSB0", baudrate=115200, timeout=0)
+
+Xpos = 0
+Ypos = 0
+Zpos = 1.8
+last_Zpos = 1.8
+Epos = 0
+has_moved_x = 0
+has_moved_y = 0
+last_serial_in = "a"
+charIn1 = "a"
+charIn2 = "a"
+controlEnabled = 1
+heatCheckFlag = 0
+g_code_last = "a"
+M114 = "a"
+M114_dcode = "a"
+waitFlag = 0
+lastMoveTime = 0
+move_mp_x = 0
+move_mp_y = 0
+start_milli = int(round(time.time() * 1000))
+currentPot1Val = 0
+currentPot2Val = 0
+movedLastLoop = 0
+retractFlag = 0
+
+
+def init():
+    global Xpos
+    global Ypos
+    global Zpos
+    GPIO.output("P8_11", GPIO.LOW)
+    okayCount = 0
+    Ypos = 15.00
+    Xpos = 5.00
+    Zpos = 1.80
+    serial_port.readline()
+    serial_port.write("\n")
+    time.sleep(2)
+    serial_port.write("G28\n")
+    for x in range(0, 1000):
+        serial_port.readline()
+        serial_port.write("G28\n")
+    serial_port.write("G28\n")
+    time.sleep(2)
+    serial_port.write("G28\n")
+    time.sleep(2)
+    serial_port.write("G21\n") #units to mm
+    serial_port.write("G1" + " X" + str(Xpos) + " Y" + str(Ypos) + " Z" + str(Zpos) + "\n") #move extruder to start position
+    heatExtruder()
+    time.sleep(.5)
+    main()
+
+def main():
+    global controlEnabled
+    global heatCheckFlag
+    while True:
+        #print(heatCheckFlag)
+        if(heatCheckFlag == 0):
+            heatCheck()
+        else:
+            potRead()
+            waitControl()
+            if(controlEnabled == 1):
+                #M114_decode()
+                xControl()
+                yControl()
+                zControl()
+                sendGCode()
+                #M114_dcode = 0;
+        
+        
+def heatCheck():
+    serial_port.flushInput()
+    global heatCheckFlag
+    serial_port.write("M105\n")
+    time.sleep(1)
+    port1 = serial_port.readline()
+    #print("Port1" + port1)
+    port2 = serial_port.readline()
+    #print("Port2" + port2)
+    delim = port2.split(' ')
+    delim1 = delim[0].split(':')
+    time.sleep(1)
+    if (len(delim1) > 1):
+        delim2 = float(delim1[1])
+        #print(delim)
+        #print(delim2)
+        if (delim2 > 213):
+            print("Temperature Reached!")
+            heatCheckFlag = 1
+            GPIO.output("P8_11", GPIO.HIGH)
+        
+def heatExtruder():
+    serial_port.write("M190 S55\n")
+    time.sleep(.5)
+    serial_port.write("M104 S215\n")
+    serial_port.flushInput()
+
+def yControl():
+    global Ypos
+    global has_moved_y
+    global last_serial_in
+    global charIn1
+    global charIn2
+    global M114_dcode
+    global move_mp_y
+    global currentPot2Val
+    upBut = GPIO.input("P8_7")
+    downBut = GPIO.input("P8_8")
+    if (has_moved_y == 1):
+        #print("Okay Detected")
+        if(upBut == 0):
+            has_moved_y = 1
+            if (Ypos >= 15):
+                Ypos = Ypos - .25
+        if(downBut == 0):
+            has_moved_y = 1
+            if (Ypos <= 205):
+                Ypos = Ypos + .25
+    if (has_moved_y == 0):
+        if(upBut == 0):
+            has_moved_y = 1
+            if (Ypos >= 15):
+                Ypos = Ypos - .25
+        if(downBut == 0):
+            has_moved_y = 1
+            if (Ypos <= 205):
+                Ypos = Ypos + .25
+    if(upBut == 1 and downBut == 1):
+        has_moved_y = 0
+    if(Ypos > 205):
+        Ypos = 205
+    if(Ypos < 15):
+        Ypos = 15
+    move_mp_y = 75 * 1/currentPot2Val #ms waittime until next move allowed
+
+
+def xControl():
+    global Xpos
+    global has_moved_x
+    global last_serial_in
+    global charIn1
+    global charIn2
+    global M114_dcode
+    global move_mp_x
+    global currentPot1Val
+    leftBut = GPIO.input("P8_9")
+    rightBut = GPIO.input("P8_10")
+    if (has_moved_x == 1):
+        #print("Okay Detected")
+        if(leftBut == 0):
+            has_moved_x = 1
+            if (Xpos >= 5):
+                Xpos = Xpos - .25
+        if(rightBut == 0):
+            has_moved_x = 1
+            if (Xpos <= 200):
+                Xpos = Xpos + .25
+    if (has_moved_x == 0):
+        if(leftBut == 0):
+            has_moved_x = 1
+            if (Xpos >= 5):
+                Xpos = Xpos - .25
+        if(rightBut == 0):
+            has_moved_x = 1
+            if (Xpos <= 200):
+                Xpos = Xpos + .25
+    if(leftBut == 1 and rightBut == 1):
+        has_moved_x = 0
+    if(Xpos > 200):
+        Xpos = 200
+    if(Xpos < 5):
+        Xpos = 5
+    move_mp_x = 75 * 1/currentPot1Val
+
+def zControl():
+    global Xpos
+    global Zpos
+    global Ypos
+    global last_Zpos
+    z_in = GPIO.input("P8_12")
+    last_Zpos = Zpos
+    if (z_in == 0):
+        Zpos = Zpos + 1.8
+        
+
+        
+        
+def sendGCode():
+    global g_code_last
+    global Xpos
+    global Ypos
+    global lastMoveTime
+    global Zpos
+    global last_Zpos
+    global Epos
+    global has_moved_x
+    global has_moved_y
+    global movedLastLoop
+    global retractFlag
+    extrudeBtn = GPIO.input("P8_13")
+    if ((has_moved_x or has_moved_y) and extrudeBtn == 0):
+        if(retractFlag == 1):
+            Epos = Epos + 7
+            retractFlag = 0
+        movedLastLoop = 1
+        if(has_moved_x and has_moved_y):
+            Epos = Epos + .35
+        else:
+            Epos = Epos + .25
+    else:
+        if(movedLastLoop == 1 and retractFlag == 0):
+            movedLastLoop = 0
+            Epos = Epos - 7
+            retractFlag = 1
+    g_code_out = ("G0 " + "X" + str(Xpos) + " Y" + str(Ypos) + " Z" + str(Zpos) + " E" +  str(Epos) + "\n")
+    if (g_code_last != g_code_out):
+        movedLastLoop = 1
+        serial_port.write(g_code_out)
+        lastMoveTime = int(round(time.time() * 1000))
+        if (Zpos != last_Zpos):
+            time.sleep(2)
+    g_code_last = g_code_out
+
+def M114_decode():
+    global M114
+    global M114_dcode
+    global g_code_last
+    serial_port.write("M114\n")
+    M114 = (serial_port.read(100))
+    M114 = M114.replace(":", "")
+    time.sleep(1)
+    print(M114)
+    print(g_code_last)
+    if(M114 in g_code_last):
+        M114_dcode = 1;
+
+def waitControl():
+    global controlEnabled
+    global move_mp_x
+    global move_mp_y
+    moveCount = int(round(time.time() * 1000)) - lastMoveTime
+    if (moveCount > move_mp_x and moveCount > move_mp_y):
+        controlEnabled = 1
+    else:
+        controlEnabled = 0
+    
+def potRead():
+    global currentPot1Val
+    global currentPot2Val
+    ADC.setup()
+    currentPot1Val = ADC.read("P9_39")
+    currentPot1Val = round(currentPot1Val, 2)
+    currentPot1Val = ((1 - currentPot1Val) * 3.5) + .5
+    currentPot2Val = ADC.read("P9_40")
+    currentPot2Val = round(currentPot2Val, 2)
+    currentPot2Val = ((1 - currentPot2Val) * 3.5) + .5
+    time.sleep(.01)
+
+init()
+
+
+    
+    # if ((("ok" in charIn1) or ("ok" in last_serial_in)) and has_moved_x == 1):
+    #     print("Okay Detected")
+    #     if(leftBut == 0):
+    #         has_moved_x = 1
+    #         if (Xpos > 5):
+    #             Xpos = Xpos - 1
+    #     if(rightBut == 0):
+    #         has_moved_x = 1
+    #         if (Xpos < 200):
+    #             Xpos = Xpos + 1
+    # if (has_moved_x == 0):
+    #     if(leftBut == 0):
+    #         has_moved_x = 1
+    #         if (Xpos > 5):
+    #             Xpos = Xpos - 1
+    #     if(rightBut == 0):
+    #         has_moved_x = 1
+    #         if (Xpos < 200):
+    #             Xpos = Xpos + 1
+    # if(leftBut == 1 and rightBut == 1):
+    #     serial_port.flushInput()
+    #     has_moved_x = 0
